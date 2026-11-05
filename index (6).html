@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pagar com Pix</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--tx:#14161a;--mut:#666c75;--line:#e3e5e9;--ac:#00a884;--acTx:#fff;--ok:#0a7d4f}
+  @media (prefers-color-scheme: dark){:root{--bg:#0f1114;--card:#191c21;--tx:#eef0f3;--mut:#9aa1ab;--line:#2a2e35;--ac:#14c49a;--acTx:#04140f;--ok:#3ddc97}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;width:100%;max-width:420px}
+  h1{font-size:22px;margin:0 0 4px}
+  .mut{color:var(--mut);font-size:14px}
+  .val{font-size:34px;font-weight:700;margin:16px 0 4px}
+  .box{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;font:12px/1.4 ui-monospace,monospace;word-break:break-all;margin:14px 0;max-height:90px;overflow:auto}
+  button,.btn{display:block;width:100%;border:0;border-radius:12px;padding:16px;font-size:17px;font-weight:600;background:var(--ac);color:var(--acTx);cursor:pointer;text-align:center;text-decoration:none}
+  button.sec{background:transparent;color:var(--tx);border:1px solid var(--line);margin-top:10px;font-size:15px;padding:12px}
+  .msg{min-height:22px;margin-top:12px;font-size:14px;color:var(--ok);text-align:center}
+  .steps{margin:18px 0 0;padding-left:18px;color:var(--mut);font-size:14px;line-height:1.6}
+  label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
+  input,select{width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--tx);font-size:15px}
+  .row{display:flex;gap:10px}.row>div{flex:1}
+  .warn{color:#d97706;font-size:13px;margin-top:6px}
+  .hide{display:none}
+</style>
+</head>
+<body>
+
+<!-- PÁGINA DE PAGAMENTO (abre pela tag NFC) -->
+<div id="pay" class="card hide">
+  <div class="mut">Pagamento via Pix</div>
+  <h1 id="pTitulo"></h1>
+  <div class="mut">Recebedor: <b id="pNome"></b></div>
+  <div class="val" id="pValor"></div>
+  <div class="box" id="pCode"></div>
+  <button id="bCopy">Copiar código Pix</button>
+  <button class="sec" id="bKey">Copiar só a chave Pix</button>
+  <div class="msg" id="pMsg"></div>
+  <ol class="steps">
+    <li>Toque em <b>Copiar código Pix</b></li>
+    <li>Abra o app do seu banco → Pix → <b>Pix Copia e Cola</b></li>
+    <li id="stepVal">Cole, confira o nome do recebedor e pague</li>
+  </ol>
+</div>
+
+<!-- GERADOR (abre sem parâmetros: você usa para cadastrar cada cliente) -->
+<div id="gen" class="card hide">
+  <h1>Gerador de link Pix NFC</h1>
+  <div class="mut">Preencha os dados do cliente e grave o link na tag.</div>
+
+  <label>Nome exibido na página (opcional)</label>
+  <input id="gT" placeholder="Ex: Padaria do João">
+
+  <div class="row">
+    <div><label>Tipo de chave</label>
+      <select id="gTipo"><option value="doc">CPF / CNPJ</option><option value="tel">Celular</option><option value="email">E-mail</option><option value="evp">Aleatória</option></select></div>
+  </div>
+  <label>Chave Pix</label>
+  <input id="gK" placeholder="Chave do cliente">
+
+  <label>Nome do recebedor (como está no banco)</label>
+  <input id="gN" maxlength="25" placeholder="Ex: Joao da Silva">
+
+  <div class="row">
+    <div><label>Cidade</label><input id="gC" maxlength="15" placeholder="Ex: Cotia"></div>
+    <div><label>Valor fixo (opcional)</label><input id="gV" inputmode="decimal" placeholder="Em branco = livre"></div>
+  </div>
+
+  <label>Endereço do seu site</label>
+  <input id="gBase" placeholder="Ex: https://seuusuario.github.io/pix/">
+  <div class="warn hide" id="baseWarn">Você está numa pré-visualização. Coloque aqui o endereço onde a página está hospedada.</div>
+
+  <div style="margin-top:18px"><button id="bGen">Gerar link</button></div>
+
+  <div id="out" class="hide">
+    <label>Link para gravar na tag</label>
+    <div class="box" id="oLink"></div>
+    <div class="mut" id="oLen"></div>
+    <button class="sec" id="bCopyLink">Copiar link</button>
+    <button class="sec" id="bTest">Testar página</button>
+  </div>
+</div>
+
+<script>
+// ---------- Pix BR Code (EMV estático, padrão Banco Central) ----------
+function clean(s){return (s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Za-z0-9 .\-@+_]/g,"").trim()}
+function f(id,v){return id+String(v.length).padStart(2,"0")+v}
+function crc16(s){let c=0xFFFF;for(let i=0;i<s.length;i++){c^=s.charCodeAt(i)<<8;for(let j=0;j<8;j++)c=(c&0x8000)?((c<<1)^0x1021)&0xFFFF:(c<<1)&0xFFFF}return c.toString(16).toUpperCase().padStart(4,"0")}
+function brcode(chave,nome,cidade,valor){
+  let p=f("00","01")+f("26",f("00","br.gov.bcb.pix")+f("01",chave))+f("52","0000")+f("53","986");
+  if(valor) p+=f("54",valor);
+  p+=f("58","BR")+f("59",clean(nome).slice(0,25)||"RECEBEDOR")+f("60",clean(cidade).slice(0,15)||"BRASIL")+f("62",f("05","***"))+"6304";
+  return p+crc16(p);
+}
+function normValor(v){if(!v)return"";v=String(v).replace(/\s/g,"").replace(",",".");const n=parseFloat(v);return n>0?n.toFixed(2):""}
+function brl(v){return Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
+
+async function copy(t){
+  try{await navigator.clipboard.writeText(t);return true}catch(e){
+    const a=document.createElement("textarea");a.value=t;a.setAttribute("readonly","");a.style.position="fixed";a.style.opacity="0";document.body.appendChild(a);a.select();a.setSelectionRange(0,99999);
+    let ok=false;try{ok=document.execCommand("copy")}catch(_){}a.remove();return ok}
+}
+
+const q=new URLSearchParams(location.search);
+const $=id=>document.getElementById(id);
+
+const hosted=/^https?:$/.test(location.protocol)&&location.origin!=="null"&&!/claudeusercontent|srcdoc/.test(location.href);
+
+function showPay(q,preview){
+  // ----- modo pagamento -----
+  const k=q.get("k"),n=q.get("n")||"",c=q.get("c")||"",v=normValor(q.get("v")),t=q.get("t")||n;
+  const code=brcode(k,n,c,v);
+  $("pTitulo").textContent=t; $("pNome").textContent=clean(n);
+  $("pValor").textContent=v?brl(v):""; if(!v)$("pValor").classList.add("hide");
+  if(!v)$("stepVal").innerHTML="Cole, <b>digite o valor</b>, confira o recebedor e pague";
+  $("pCode").textContent=code; document.title="Pix – "+t;
+  $("bCopy").onclick=async()=>{$("pMsg").textContent=(await copy(code))?"✓ Código copiado! Agora abra o app do banco.":"Não deu para copiar — selecione o código acima."};
+  $("bKey").onclick=async()=>{$("pMsg").textContent=(await copy(k))?"✓ Chave copiada!":"Não deu para copiar."};
+  $("gen").classList.add("hide");
+  $("pay").classList.remove("hide");
+  if(preview&&!$("bBack")){
+    const b=document.createElement("button");b.id="bBack";b.className="sec";b.textContent="← Voltar ao gerador";
+    b.onclick=()=>{$("pay").classList.add("hide");$("gen").classList.remove("hide");$("pMsg").textContent=""};
+    $("pay").appendChild(b);
+  }
+}
+
+if(q.get("k")){
+  showPay(q,false);
+}else{
+  // ----- modo gerador -----
+  $("gen").classList.remove("hide");
+  if(hosted){$("gBase").value=location.origin+location.pathname}else{$("baseWarn").classList.remove("hide")}
+  try{const s=localStorage.getItem("pixBase");if(s&&!hosted)$("gBase").value=s}catch(_){}
+  let lastParams=null;
+  $("bTest").onclick=()=>{if(lastParams)showPay(lastParams,true)};
+  $("bGen").onclick=()=>{
+    const tipo=$("gTipo").value; let k=$("gK").value.trim();
+    if(tipo==="doc")k=k.replace(/\D/g,"");
+    if(tipo==="tel"){k=k.replace(/\D/g,"");if(!k.startsWith("55"))k="55"+k;k="+"+k}
+    if(tipo==="email")k=k.toLowerCase();
+    if(!k||!$("gN").value.trim()){alert("Preencha a chave e o nome do recebedor.");return}
+    const p=new URLSearchParams();
+    p.set("k",k);p.set("n",clean($("gN").value));p.set("c",clean($("gC").value));
+    const v=normValor($("gV").value);if(v)p.set("v",v);
+    const t=$("gT").value.trim();if(t&&t!==$("gN").value.trim())p.set("t",t);
+    let base=$("gBase").value.trim();
+    if(!/^https?:\/\//i.test(base)){alert("Coloque o endereço do seu site (começando com https://).");return}
+    base=base.split("?")[0];
+    try{localStorage.setItem("pixBase",base)}catch(_){}
+    lastParams=p;
+    const link=base+"?"+p.toString();
+    $("oLink").textContent=link;
+    const len=link.replace(/^https?:\/\/(www\.)?/,"").length;
+    $("oLen").innerHTML=len+" caracteres. "+(len>130?'<span class="warn">Use tag NTAG215 ou NTAG216 (não cabe na NTAG213).</span>':"Cabe numa NTAG213.");
+    $("out").classList.remove("hide");
+  };
+  $("bCopyLink").onclick=async()=>{await copy($("oLink").textContent);$("bCopyLink").textContent="✓ Copiado"};
+}
+</script>
+</body>
+</html>
